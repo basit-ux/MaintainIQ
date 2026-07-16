@@ -1,0 +1,142 @@
+// MaintainIQ - Prisma schema (SQLite)
+// Replaces the previous MongoDB/Mongoose models 1:1 in behavior.
+// SQLite has no native enum type, so enums are stored as String and
+// validated in application code (same values as before).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// role: "admin" | "technician"
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  password      String
+  role          String   @default("admin")
+  avatarUrl     String   @default("")
+  isOnline      Boolean  @default(false)
+  lastSeen      DateTime @default(now())
+
+  // Technician's assigned admin, used to scope chat visibility.
+  assignedAdminId String?
+  assignedAdmin   User?   @relation("AdminTechnicians", fields: [assignedAdminId], references: [id], onDelete: SetNull)
+  technicians     User[]  @relation("AdminTechnicians")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdAssets        Asset[]   @relation("AssetCreatedBy")
+  assignedAssets        Asset[]   @relation("AssetAssignedTechnician")
+  assignedIssues        Issue[]   @relation("IssueAssignedTechnician")
+  sentMessages          Message[] @relation("MessageSender")
+  receivedMessages      Message[] @relation("MessageReceiver")
+
+  @@index([role])
+}
+
+// status: one of ASSET_STATUSES (see utils/constants.js)
+model Asset {
+  id                   String   @id @default(cuid())
+  code                 String   @unique
+  name                 String
+  category             String   @default("General")
+  location             String   @default("Unspecified")
+  condition            String   @default("Good")
+  status               String   @default("Operational")
+  lastServiceDate      String?
+  nextServiceDate      String?
+
+  assignedTechnicianId String?
+  assignedTechnician   User?    @relation("AssetAssignedTechnician", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+
+  qrCodeUrl            String   @default("")
+  imageUrl             String   @default("")
+
+  createdById          String?
+  createdBy            User?    @relation("AssetCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  issues  Issue[]
+  history History[]
+
+  @@index([status])
+  @@index([category])
+}
+
+// status: one of ISSUE_STATUSES, priority: one of PRIORITIES
+// aiSuggested / maintenance were embedded sub-documents in Mongoose;
+// stored here as JSON-encoded strings and parsed/serialized in the
+// controller layer so the API response shape is unchanged.
+model Issue {
+  id                    String   @id @default(cuid())
+  issueNumber           String   @unique
+  assetId               String
+  asset                 Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  title                 String
+  description           String
+  category              String   @default("General")
+  priority              String   @default("Medium")
+  reporterName          String   @default("Anonymous")
+  reporterContact       String   @default("")
+  photoUrl              String   @default("")
+  status                String   @default("Reported")
+
+  assignedTechnicianId  String?
+  assignedTechnician    User?    @relation("IssueAssignedTechnician", fields: [assignedTechnicianId], references: [id], onDelete: SetNull)
+
+  aiSuggested           String?  // JSON
+  aiEdited               Boolean  @default(false)
+  maintenance           String?  // JSON
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  history History[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([assetId])
+  @@index([assignedTechnicianId])
+}
+
+model History {
+  id              String   @id @default(cuid())
+  assetId         String
+  asset           Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  action          String
+  actorName       String   @default("System")
+  actorRole       String   @default("system")
+  relatedIssueId  String?
+  relatedIssue    Issue?   @relation(fields: [relatedIssueId], references: [id], onDelete: SetNull)
+  timestamp       DateTime @default(now())
+
+  @@index([assetId])
+  @@index([timestamp])
+}
+
+// status: "sent" | "delivered" | "seen"
+model Message {
+  id         String    @id @default(cuid())
+  senderId   String
+  sender     User      @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiverId String
+  receiver   User      @relation("MessageReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  text       String    @default("")
+  imageUrl   String    @default("")
+  status     String    @default("sent")
+  seenAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([senderId, receiverId, createdAt])
+}
